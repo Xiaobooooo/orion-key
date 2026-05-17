@@ -174,20 +174,6 @@ export default function CheckoutPage() {
             selected={selectedPayment}
             onSelect={setSelectedPayment}
           />
-          {selectedPayment.startsWith("usdt_") && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              {t("payment.usdt.rateHint")}
-            </p>
-          )}
-        </div>
-
-        {/* Security notice */}
-        <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/30 p-4">
-          <Lock className="h-5 w-5 shrink-0 text-muted-foreground" />
-          <div className="text-xs text-muted-foreground">
-            <p className="mb-1 font-medium text-foreground">{t("checkout.securePayment")}</p>
-            <p>{t("checkout.securePaymentDesc")}</p>
-          </div>
         </div>
 
         <Turnstile onSuccess={setTurnstileToken} onError={handleTurnstileReset} className="mb-4" />

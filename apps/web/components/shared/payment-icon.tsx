@@ -19,6 +19,7 @@ function getLogoSrc(method: string): string | null {
   if (m.includes("alipay") || m === "支付宝") return "/images/payment/ali.svg"
   if (m.includes("wechat") || m === "微信支付") return "/images/payment/wechat.svg"
   if (m.includes("usdt")) return "/images/payment/usdt.svg"
+  if (m.includes("trx")) return "/images/payment/trx.svg"
   return null
 }
 
@@ -29,6 +30,7 @@ const BRAND_COLORS: Record<string, string> = {
   usdt: "#26A17B",
   usdt_trc20: "#26A17B",
   usdt_bsc: "#26A17B",
+  trx_tron: "#ef0027",
 }
 
 export function getPaymentBrandColor(method: string): string | undefined {
@@ -43,6 +45,7 @@ const PAYMENT_LABELS: Record<string, string> = {
   usdt_erc20: "USDT (ERC-20)",
   usdt_bep20: "USDT (BEP-20)",
   usdt_bsc: "USDT (BSC)",
+  trx_tron: "TRX (TRON)",
 }
 
 /** 获取支付方式显示名称（优先 i18n t() 翻译，无翻译时回退到内置映射；大小写不敏感） */

@@ -76,11 +76,12 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
   },
   {
     type: "usdt",
-    name: "USDT 加密货币 (BEpusdt)",
+    name: "加密货币 (BEpusdt)",
     description: "通过 BEpusdt 接收 USDT 加密货币付款（TRC-20 / BEP-20）",
     channels: [
       { code: "usdt_trc20", name: "USDT (TRC-20)" },
       { code: "usdt_bep20", name: "USDT (BEP-20)" },
+      { code: "trx_tron", name: "TRX (TRON)" },
     ],
     configFields: [
       { key: "api_url", label: "BEpusdt 服务地址", placeholder: "例如：http://bepusdt:8080" },

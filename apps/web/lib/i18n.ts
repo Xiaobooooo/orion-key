@@ -97,8 +97,6 @@ const zh = {
   "checkout.paymentMethod": "支付方式",
   "checkout.confirmOrder": "确认订单",
   "checkout.processingOrder": "订单已创建，正在跳转支付...",
-  "checkout.securePayment": "安全支付",
-  "checkout.securePaymentDesc": "您的支付信息将通过加密传输，我们承诺保护您的隐私安全",
 
   // Order
   "order.query": "订单查询",
@@ -189,11 +187,10 @@ const zh = {
   "payment.usdt.amount": "转账金额",
   "payment.usdt.amountHint": "需实际到账金额",
   "payment.usdt.address": "收款地址",
-  "payment.usdt.warnExact": "请确保实际到账金额为 {amount} USDT",
+  "payment.usdt.warnExact": "请确保实际到账金额为 {amount} {coin}",
   "payment.usdt.warnFee": "从交易所提现会扣手续费，建议使用链上钱包直接转账",
   "payment.usdt.warnChain": "请务必使用 {chain} 网络，选错网络将无法找回",
   "payment.usdt.delayHint": "区块链转账通常需要 1~3 分钟确认到账，请耐心等待，系统会自动检测",
-  "payment.usdt.rateHint": "将以实时汇率换算为 USDT 金额，转账时请确保金额精确一致",
   "payment.redirectingToPay": "正在跳转至支付页面...",
   "payment.returnedFromPay": "如已完成支付，请等待系统确认",
   "payment.retryPay": "重新发起支付",
@@ -723,8 +720,6 @@ const en: Record<keyof typeof zh, string> = {
   "checkout.paymentMethod": "Payment Method",
   "checkout.confirmOrder": "Confirm Order",
   "checkout.processingOrder": "Order created, redirecting to payment...",
-  "checkout.securePayment": "Secure Payment",
-  "checkout.securePaymentDesc": "Your payment is encrypted and secure. We are committed to protecting your privacy",
 
   // Order
   "order.query": "Order Query",
@@ -815,11 +810,10 @@ const en: Record<keyof typeof zh, string> = {
   "payment.usdt.amount": "Transfer Amount",
   "payment.usdt.amountHint": "exact amount required",
   "payment.usdt.address": "Receiving Address",
-  "payment.usdt.warnExact": "Please ensure the exact amount of {amount} USDT is received",
+  "payment.usdt.warnExact": "Please ensure the exact amount of {amount} {coin} is received",
   "payment.usdt.warnFee": "Exchange withdrawals deduct fees. Use a wallet app for direct transfer",
   "payment.usdt.warnChain": "Use {chain} network only. Funds sent on wrong network cannot be recovered",
   "payment.usdt.delayHint": "Blockchain transfers typically take 1-3 minutes to confirm. Please wait patiently",
-  "payment.usdt.rateHint": "Amount will be converted to USDT at real-time exchange rate",
   "payment.redirectingToPay": "Redirecting to payment...",
   "payment.returnedFromPay": "If paid, please wait for confirmation",
   "payment.retryPay": "Retry Payment",

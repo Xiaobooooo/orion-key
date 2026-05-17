@@ -56,13 +56,14 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
   const brandColor = getPaymentBrandColor(paymentMethod)
 
   // USDT 支付判断 & 参数
-  const isUsdtPayment = paymentMethod.startsWith("usdt_")
+  const isUsdtPayment = paymentMethod.startsWith("usdt_") || paymentMethod.startsWith("trx_")
   // 微信移动端：jspay 走 JSAPI（需微信内置浏览器），普通浏览器只能展示二维码
   const isWechatMobile = isMobile && ["wechat", "wxpay"].includes(paymentMethod.toLowerCase())
   const walletAddress = searchParams.get("wallet") || ""
   const cryptoAmount = searchParams.get("crypto_amount") || ""
   const usdtChain = searchParams.get("chain") || paymentMethod
-  const chainDisplayName = usdtChain.includes("trc20") ? "TRC-20" : usdtChain.includes("bep20") ? "BEP-20" : usdtChain
+  const cryptoCoin = usdtChain.split('_')[0].toUpperCase()
+  const chainDisplayName = usdtChain.includes("trc20") ? "TRC-20" : usdtChain.includes("tron") ? "TRON" : usdtChain.includes("bep20") ? "BEP-20" : usdtChain
 
   // 初始化：获取订单状态 + QR code + H5 pay URL + 真实倒计时
   useEffect(() => {
@@ -326,7 +327,7 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
                     className="cursor-pointer text-lg font-bold text-foreground underline-offset-4 transition-all hover:underline hover:text-primary"
                     onClick={() => copyToClipboard(cryptoAmount)}
                   >
-                    {cryptoAmount} USDT
+                    {cryptoAmount} {cryptoCoin}
                   </span>
                   <button type="button" onClick={() => copyToClipboard(cryptoAmount)}
                           className="shrink-0 text-muted-foreground transition-colors hover:text-foreground">
@@ -381,7 +382,7 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
             <ul className="flex w-full max-w-sm flex-col gap-1 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
               <li className="flex items-start gap-1.5">
                 <span className="mt-0.5 shrink-0">•</span>
-                <span>{t("payment.usdt.warnExact").replace("{amount}", cryptoAmount)}</span>
+                <span>{t("payment.usdt.warnExact").replace("{amount}", cryptoAmount).replace("{coin}", cryptoCoin)}</span>
               </li>
               <li className="flex items-start gap-1.5">
                 <span className="mt-0.5 shrink-0">•</span>
