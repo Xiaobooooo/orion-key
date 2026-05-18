@@ -183,7 +183,10 @@ export default function AdminOrdersPage() {
             <option value="">{t("admin.allPayment")}</option>
             <option value="alipay">支付宝</option>
             <option value="wechat">微信支付</option>
-            <option value="usdt_trc20">USDT</option>
+            <option value="bnb_bsc">BNB-BSC</option>
+            <option value="usdt_trc20">USDT-BEP20</option>
+            <option value="trx_tron">TRX-TRON</option>
+            <option value="usdt_trc20">USDT-TRC20</option>
           </select>
           <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         </div>

@@ -77,18 +77,19 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
   {
     type: "usdt",
     name: "加密货币 (BEpusdt)",
-    description: "通过 BEpusdt 接收 USDT 加密货币付款（TRC-20 / BEP-20）",
+    description: "通过 BEpusdt 接收 USDT 加密货币付款",
     channels: [
-      { code: "usdt_trc20", name: "USDT (TRC-20)" },
+      { code: "bnb_bsc", name: "BNB (BSC)" },
       { code: "usdt_bep20", name: "USDT (BEP-20)" },
       { code: "trx_tron", name: "TRX (TRON)" },
+      { code: "usdt_trc20", name: "USDT (TRC-20)" },
     ],
     configFields: [
       { key: "api_url", label: "BEpusdt 服务地址", placeholder: "例如：http://bepusdt:8080" },
       { key: "api_token", label: "API Token", placeholder: "BEpusdt 管理后台获取", type: "password" },
       { key: "notify_url", label: "回调通知地址", placeholder: "例如：https://domain.com/api/payments/webhook/usdt" },
       { key: "redirect_url", label: "支付成功跳转（可选）", placeholder: "例如：https://domain.com/order/query" },
-      { key: "trade_type", label: "交易类型", placeholder: "usdt.trc20 或 usdt.bep20" },
+      { key: "trade_type", label: "交易类型", placeholder: "bsc.bnb / usdt.bep20 / tron.trx / usdt.trc20" },
       { key: "fiat", label: "法币类型", placeholder: "CNY / USD" },
       { key: "timeout", label: "超时秒数", placeholder: "默认 900" },
       { key: "fixed_rate", label: "固定汇率", placeholder: "留空则使用动态汇率，例如 7.2 表示 1 USDT = 7.2 CNY" },

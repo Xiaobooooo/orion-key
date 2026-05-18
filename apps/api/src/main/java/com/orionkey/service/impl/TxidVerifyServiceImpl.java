@@ -54,11 +54,17 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
     );
 
     private static final String NATIVE_TRX_ASSET = "TRX";
+    private static final String NATIVE_BNB_ASSET = "BNB";
 
     /**
      * Tron 原生 TRX 精度为 6 位（1 TRX = 1_000_000 SUN）
      */
     private static final int TRX_DECIMALS = 6;
+
+    /**
+     * BSC 原生 BNB 精度为 18 位（1 BNB = 1e18 wei）
+     */
+    private static final int BNB_DECIMALS = 18;
 
     /**
      * 交易时间校验缓冲（秒）：链上交易时间必须 ≥ 订单创建时间 - 此缓冲值。
@@ -104,7 +110,7 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
                     "ADDRESS_MISMATCH", tx.from, tx.to, tx.amount, true);
         }
 
-        // ---- Step 4: 币种是否匹配订单链路（USDT 链校验合约，TRX 链校验原生转账） ----
+        // ---- Step 4: 币种是否匹配订单链路（USDT 链校验合约，TRX/BNB 链校验原生转账） ----
         // F5: USDT 链必须校验 contractAddress 非 null — 否则原生代币（TRX/BNB）转账会绕过此检查
         if (!isExpectedAsset(chain, tx.contractAddress)) {
             saveUnmatched(order, txid, chain, VerifyResult.AUTO_REJECTED,
@@ -193,7 +199,9 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
         String normalizedChain = chain != null ? chain.toLowerCase() : null;
         if (normalizedChain != null && (normalizedChain.contains("trc20") || normalizedChain.contains("trx"))) {
             return queryTronTransaction(txid, requireSolidified);
-        } else if (normalizedChain != null && normalizedChain.contains("bep20")) {
+        } else if (normalizedChain != null && normalizedChain.contains("bnb")) {
+            return queryBscNativeTransaction(txid);
+        } else if (normalizedChain != null && (normalizedChain.contains("bep20") || normalizedChain.contains("bsc"))) {
             return queryBscTransaction(txid);
         }
         throw new BusinessException(ErrorCode.TXID_VERIFY_FAILED, "不支持的链类型: " + chain);
@@ -485,6 +493,63 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
     }
 
     /**
+     * 通过 BSC 公共 RPC 查询原生 BNB 转账。
+     * receipt 用于确认状态和区块时间；transaction 用于读取 from/to/value。
+     */
+    private ChainTransaction queryBscNativeTransaction(String txid) {
+        String rpcUrl = "https://bsc-dataseed.bnbchain.org/";
+        log.info("Querying BSC native BNB transaction: txid={}", txid);
+
+        Map<String, Object> receiptRequest = Map.of(
+                "jsonrpc", "2.0",
+                "method", "eth_getTransactionReceipt",
+                "params", List.of(txid),
+                "id", 1
+        );
+
+        String receiptBody = restTemplate.postForObject(rpcUrl, receiptRequest, String.class);
+        if (receiptBody == null) return null;
+
+        try {
+            Map<String, Object> receiptRpc = objectMapper.readValue(receiptBody, new TypeReference<>() {
+            });
+            @SuppressWarnings("unchecked")
+            Map<String, Object> receipt = (Map<String, Object>) receiptRpc.get("result");
+            if (receipt == null) return null;
+
+            boolean confirmed = "0x1".equals(receipt.get("status"));
+            String blockNumberHex = (String) receipt.get("blockNumber");
+            Long blockTimestamp = queryBscBlockTimestamp(rpcUrl, blockNumberHex);
+
+            Map<String, Object> txRequest = Map.of(
+                    "jsonrpc", "2.0",
+                    "method", "eth_getTransactionByHash",
+                    "params", List.of(txid),
+                    "id", 3
+            );
+            String txBody = restTemplate.postForObject(rpcUrl, txRequest, String.class);
+            if (txBody == null) return null;
+
+            Map<String, Object> txRpc = objectMapper.readValue(txBody, new TypeReference<>() {
+            });
+            @SuppressWarnings("unchecked")
+            Map<String, Object> tx = (Map<String, Object>) txRpc.get("result");
+            if (tx == null) return null;
+
+            String from = (String) tx.get("from");
+            String to = (String) tx.get("to");
+            String valueHex = (String) tx.get("value");
+            if (valueHex == null) return null;
+
+            BigDecimal amount = new BigDecimal(hexQuantityToBigInteger(valueHex)).movePointLeft(BNB_DECIMALS);
+            return new ChainTransaction(from, to, amount.toPlainString(), NATIVE_BNB_ASSET, confirmed, blockTimestamp);
+        } catch (Exception e) {
+            log.error("Failed to parse BSC native BNB transaction: {}", e.getMessage());
+            throw new RuntimeException("BSC BNB RPC 解析失败", e);
+        }
+    }
+
+    /**
      * 通过 BSC RPC 查询区块时间戳。
      * eth_getBlockByNumber 返回区块头，其中 timestamp 为 hex 编码的秒级 Unix 时间戳。
      *
@@ -512,7 +577,7 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
 
             String timestampHex = (String) blockResult.get("timestamp");
             if (timestampHex == null) return null;
-            return Long.parseLong(timestampHex.substring(2), 16);
+            return hexQuantityToBigInteger(timestampHex).longValue();
         } catch (Exception e) {
             log.warn("Failed to query BSC block timestamp: blockNumber={}, error={}", blockNumberHex, e.getMessage());
             return null;
@@ -615,6 +680,9 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
         if (isTrxChain(chain)) {
             return NATIVE_TRX_ASSET.equals(contractAddress);
         }
+        if (isBnbChain(chain)) {
+            return NATIVE_BNB_ASSET.equals(contractAddress);
+        }
         return contractAddress != null && USDT_CONTRACTS.contains(contractAddress.toLowerCase());
     }
 
@@ -622,12 +690,24 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
         return chain != null && chain.toLowerCase().contains("trx");
     }
 
+    private boolean isBnbChain(String chain) {
+        return chain != null && chain.toLowerCase().contains("bnb");
+    }
+
     private String assetMismatchReason(String chain) {
+        if (isBnbChain(chain)) return "NOT_BNB";
         return isTrxChain(chain) ? "NOT_TRX" : "NOT_USDT";
     }
 
     private String assetMismatchMessage(String chain) {
+        if (isBnbChain(chain)) return "非 BNB 转账交易";
         return isTrxChain(chain) ? "非 TRX 转账交易" : "非 USDT 合约交易";
+    }
+
+    private BigInteger hexQuantityToBigInteger(String hexQuantity) {
+        String hex = hexQuantity.startsWith("0x") ? hexQuantity.substring(2) : hexQuantity;
+        if (hex.isBlank()) return BigInteger.ZERO;
+        return new BigInteger(hex, 16);
     }
 
     private static final String BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
