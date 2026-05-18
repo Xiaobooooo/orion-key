@@ -197,11 +197,13 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
 
     private ChainTransaction queryTransaction(String chain, String txid, boolean requireSolidified) {
         String normalizedChain = chain != null ? chain.toLowerCase() : null;
-        if (normalizedChain != null && (normalizedChain.contains("trc20") || normalizedChain.contains("trx"))) {
+        if (normalizedChain != null && normalizedChain.contains("trc20")) {
             return queryTronTransaction(txid, requireSolidified);
-        } else if (normalizedChain != null && normalizedChain.contains("bnb")) {
+        } else if (normalizedChain != null && normalizedChain.contains("tron")) {
+            return queryTronNativeTransfer(txid, requireSolidified);
+        } else if (normalizedChain != null && normalizedChain.contains("bsc")) {
             return queryBscNativeTransaction(txid);
-        } else if (normalizedChain != null && (normalizedChain.contains("bep20") || normalizedChain.contains("bsc"))) {
+        } else if (normalizedChain != null && normalizedChain.contains("bep20")) {
             return queryBscTransaction(txid);
         }
         throw new BusinessException(ErrorCode.TXID_VERIFY_FAILED, "不支持的链类型: " + chain);
