@@ -20,7 +20,17 @@ spring:
   sql:
     init:
       mode: never
-
+  mail:
+    host: ${MAIL_HOST:mail.example.com}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME:noreply@example.com}
+    password: ${MAIL_PASSWORD:your_password}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true
 jwt:
   secret: test-secret-key-must-be-at-least-256-bits-long-for-hs256-algorithm
   expiration: 86400000

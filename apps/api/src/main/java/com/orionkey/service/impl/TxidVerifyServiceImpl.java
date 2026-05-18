@@ -53,6 +53,13 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
             BSC_USDT_CONTRACT.toLowerCase()
     );
 
+    private static final String NATIVE_TRX_ASSET = "TRX";
+
+    /**
+     * Tron 原生 TRX 精度为 6 位（1 TRX = 1_000_000 SUN）
+     */
+    private static final int TRX_DECIMALS = 6;
+
     /**
      * 交易时间校验缓冲（秒）：链上交易时间必须 ≥ 订单创建时间 - 此缓冲值。
      * 正常流程中用户必须先拿到钱包地址才能转账，交易一定在订单之后；
@@ -97,13 +104,13 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
                     "ADDRESS_MISMATCH", tx.from, tx.to, tx.amount, true);
         }
 
-        // ---- Step 4: Token 合约是否为 USDT ----
-        // F5: 必须校验 contractAddress 非 null — 否则原生代币（TRX/BNB）转账会绕过此检查
-        if (tx.contractAddress == null || !USDT_CONTRACTS.contains(tx.contractAddress.toLowerCase())) {
+        // ---- Step 4: 币种是否匹配订单链路（USDT 链校验合约，TRX 链校验原生转账） ----
+        // F5: USDT 链必须校验 contractAddress 非 null — 否则原生代币（TRX/BNB）转账会绕过此检查
+        if (!isExpectedAsset(chain, tx.contractAddress)) {
             saveUnmatched(order, txid, chain, VerifyResult.AUTO_REJECTED,
-                    "NOT_USDT", tx.from, tx.to, tx.amount);
+                    assetMismatchReason(chain), tx.from, tx.to, tx.amount);
             return new VerifyDetail(VerifyResult.AUTO_REJECTED,
-                    "NOT_USDT", tx.from, tx.to, tx.amount, true);
+                    assetMismatchReason(chain), tx.from, tx.to, tx.amount, true);
         }
 
         // ---- Step 5: 交易时间校验（防止历史交易 TXID 重放攻击） ----
@@ -172,7 +179,8 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
             String contractAddress,
             boolean confirmed,
             Long blockTimestamp   // 区块时间戳（秒级 Unix timestamp），null 表示获取失败
-    ) {}
+    ) {
+    }
 
     /**
      * 查询链上交易
@@ -182,34 +190,41 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
     }
 
     private ChainTransaction queryTransaction(String chain, String txid, boolean requireSolidified) {
-        if (chain != null && chain.contains("trc20")) {
+        String normalizedChain = chain != null ? chain.toLowerCase() : null;
+        if (normalizedChain != null && (normalizedChain.contains("trc20") || normalizedChain.contains("trx"))) {
             return queryTronTransaction(txid, requireSolidified);
-        } else if (chain != null && chain.contains("bep20")) {
+        } else if (normalizedChain != null && normalizedChain.contains("bep20")) {
             return queryBscTransaction(txid);
         }
         throw new BusinessException(ErrorCode.TXID_VERIFY_FAILED, "不支持的链类型: " + chain);
     }
 
     /**
-     * 通过 TronGrid API 查询 TRC20 交易
+     * 通过 TronGrid API 查询 Tron 交易。
+     * 优先解析 TRC20 Transfer event；没有事件时回退解析原生 TRX TransferContract。
      */
     private ChainTransaction queryTronTransaction(String txid, boolean requireSolidified) {
         String url = "https://api.trongrid.io/v1/transactions/" + txid + "/events";
         log.info("Querying TronGrid: {}", url);
 
         String responseBody = restTemplate.getForObject(url, String.class);
-        if (responseBody == null) return null;
+        if (responseBody == null) return queryTronNativeTransfer(txid, requireSolidified);
 
         try {
-            Map<String, Object> result = objectMapper.readValue(responseBody, new TypeReference<>() {});
+            Map<String, Object> result = objectMapper.readValue(responseBody, new TypeReference<>() {
+            });
             log.debug("TronGrid response: {}", responseBody);
 
             Boolean success = (Boolean) result.get("success");
-            if (!Boolean.TRUE.equals(success)) return null;
+            if (!Boolean.TRUE.equals(success)) {
+                return queryTronNativeTransfer(txid, requireSolidified);
+            }
 
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> data = (List<Map<String, Object>>) result.get("data");
-            if (data == null || data.isEmpty()) return null;
+            if (data == null || data.isEmpty()) {
+                return queryTronNativeTransfer(txid, requireSolidified);
+            }
 
             // 查找 Transfer 事件
             for (Map<String, Object> event : data) {
@@ -241,11 +256,136 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
                 boolean confirmed = !requireSolidified || checkTronTransactionConfirmed(txid);
                 return new ChainTransaction(from, to, amount.toPlainString(), contractAddress, confirmed, blockTimestamp);
             }
-            return null;
+            return queryTronNativeTransfer(txid, requireSolidified);
         } catch (Exception e) {
             log.error("Failed to parse TronGrid response: {}", e.getMessage());
             throw new RuntimeException("TronGrid API 解析失败", e);
         }
+    }
+
+    /**
+     * 查询 Tron 原生 TRX 转账。
+     * TRX 转账不会产生 TRC20 Transfer event，需要从交易本体的 TransferContract 读取收付款方和 SUN 金额。
+     */
+    private ChainTransaction queryTronNativeTransfer(String txid, boolean requireSolidified) {
+        String transactionUrl = requireSolidified
+                ? "https://api.trongrid.io/walletsolidity/gettransactionbyid"
+                : "https://api.trongrid.io/wallet/gettransactionbyid";
+        log.info("Querying Tron native transaction: {}", transactionUrl);
+
+        try {
+            Map<String, String> body = Map.of("value", txid);
+            String responseBody = restTemplate.postForObject(transactionUrl, body, String.class);
+            if (responseBody == null || responseBody.isBlank() || "{}".equals(responseBody.trim())) {
+                return null;
+            }
+
+            Map<String, Object> transaction = objectMapper.readValue(responseBody, new TypeReference<>() {
+            });
+            @SuppressWarnings("unchecked")
+            Map<String, Object> rawData = (Map<String, Object>) transaction.get("raw_data");
+            if (rawData == null) return null;
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> contracts = (List<Map<String, Object>>) rawData.get("contract");
+            if (contracts == null || contracts.isEmpty()) return null;
+
+            TronTransactionInfo transactionInfo = queryTronTransactionInfo(txid, requireSolidified);
+            boolean successful = isTronTransactionRetSuccessful(transaction)
+                    && transactionInfo.exists()
+                    && transactionInfo.successful();
+
+            for (Map<String, Object> contract : contracts) {
+                if (!"TransferContract".equals(contract.get("type"))) continue;
+
+                @SuppressWarnings("unchecked")
+                Map<String, Object> parameter = (Map<String, Object>) contract.get("parameter");
+                if (parameter == null) continue;
+
+                @SuppressWarnings("unchecked")
+                Map<String, Object> value = (Map<String, Object>) parameter.get("value");
+                if (value == null) continue;
+
+                String from = hexToTronBase58((String) value.get("owner_address"));
+                String to = hexToTronBase58((String) value.get("to_address"));
+                Object amountObj = value.get("amount");
+                String rawAmount = amountObj != null ? amountObj.toString() : "0";
+                BigDecimal amount = new BigDecimal(rawAmount).movePointLeft(TRX_DECIMALS);
+
+                return new ChainTransaction(from, to, amount.toPlainString(), NATIVE_TRX_ASSET,
+                        successful, transactionInfo.blockTimestamp());
+            }
+
+            return null;
+        } catch (Exception e) {
+            log.error("Failed to parse Tron native transaction: {}", e.getMessage());
+            throw new RuntimeException("Tron 原生交易解析失败", e);
+        }
+    }
+
+    private record TronTransactionInfo(boolean exists, boolean successful, Long blockTimestamp) {
+    }
+
+    private TronTransactionInfo queryTronTransactionInfo(String txid, boolean requireSolidified) {
+        String infoUrl = requireSolidified
+                ? "https://api.trongrid.io/walletsolidity/gettransactioninfobyid"
+                : "https://api.trongrid.io/wallet/gettransactioninfobyid";
+        try {
+            Map<String, String> body = Map.of("value", txid);
+            String response = restTemplate.postForObject(infoUrl, body, String.class);
+            if (response == null || response.isBlank() || "{}".equals(response.trim())) {
+                return new TronTransactionInfo(false, false, null);
+            }
+
+            Map<String, Object> info = objectMapper.readValue(response, new TypeReference<>() {
+            });
+            boolean exists = info.containsKey("id") || info.containsKey("txID");
+            boolean successful = exists && isTronReceiptSuccessful(info) && isTronTransactionRetSuccessful(info);
+
+            Long blockTimestamp = null;
+            Object blockTsObj = info.get("blockTimeStamp");
+            if (blockTsObj instanceof Number) {
+                blockTimestamp = ((Number) blockTsObj).longValue() / 1000;
+            }
+            if (blockTimestamp == null) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> rawData = (Map<String, Object>) info.get("raw_data");
+                if (rawData != null) {
+                    Object rawTimestamp = rawData.get("timestamp");
+                    if (rawTimestamp instanceof Number) {
+                        blockTimestamp = ((Number) rawTimestamp).longValue() / 1000;
+                    }
+                }
+            }
+
+            return new TronTransactionInfo(exists, successful, blockTimestamp);
+        } catch (Exception e) {
+            log.warn("Failed to query Tron transaction info: txid={}, error={}", txid, e.getMessage());
+            return new TronTransactionInfo(false, false, null);
+        }
+    }
+
+    private boolean isTronTransactionRetSuccessful(Map<String, Object> transaction) {
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> ret = (List<Map<String, Object>>) transaction.get("ret");
+        if (ret == null || ret.isEmpty()) return true;
+
+        for (Map<String, Object> item : ret) {
+            Object contractRet = item.get("contractRet");
+            if (contractRet != null && !"SUCCESS".equals(contractRet.toString())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean isTronReceiptSuccessful(Map<String, Object> info) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> receipt = (Map<String, Object>) info.get("receipt");
+        if (receipt == null) return true;
+
+        Object result = receipt.get("result");
+        return result == null || "SUCCESS".equals(result.toString()) || "DEFAULT".equals(result.toString());
     }
 
     /**
@@ -261,15 +401,12 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
                 log.warn("TronGrid solidity: transaction not yet solidified, txid={}", txid);
                 return false;
             }
-            Map<String, Object> info = objectMapper.readValue(response, new TypeReference<>() {});
+            Map<String, Object> info = objectMapper.readValue(response, new TypeReference<>() {
+            });
             // 如果无 id 字段，说明交易未被 solidified
             if (!info.containsKey("id")) return false;
             // 检查 receipt.result: "SUCCESS" 或 null/absent 均视为成功
-            @SuppressWarnings("unchecked")
-            Map<String, Object> receipt = (Map<String, Object>) info.get("receipt");
-            if (receipt == null) return true; // 无 receipt 表示简单转账，视为成功
-            String receiptResult = (String) receipt.get("result");
-            return receiptResult == null || "SUCCESS".equals(receiptResult) || "DEFAULT".equals(receiptResult);
+            return isTronReceiptSuccessful(info);
         } catch (Exception e) {
             log.warn("Failed to verify TronGrid transaction confirmation: txid={}, error={}", txid, e.getMessage());
             return false; // Fail-safe: 未确认则拒绝
@@ -297,7 +434,8 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
         if (responseBody == null) return null;
 
         try {
-            Map<String, Object> rpcResponse = objectMapper.readValue(responseBody, new TypeReference<>() {});
+            Map<String, Object> rpcResponse = objectMapper.readValue(responseBody, new TypeReference<>() {
+            });
             @SuppressWarnings("unchecked")
             Map<String, Object> receipt = (Map<String, Object>) rpcResponse.get("result");
             if (receipt == null) return null;
@@ -366,7 +504,8 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
             String blockResponse = restTemplate.postForObject(rpcUrl, blockRequest, String.class);
             if (blockResponse == null) return null;
 
-            Map<String, Object> blockRpc = objectMapper.readValue(blockResponse, new TypeReference<>() {});
+            Map<String, Object> blockRpc = objectMapper.readValue(blockResponse, new TypeReference<>() {
+            });
             @SuppressWarnings("unchecked")
             Map<String, Object> blockResult = (Map<String, Object>) blockRpc.get("result");
             if (blockResult == null) return null;
@@ -382,8 +521,9 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
 
     @Override
     public ChainVerifyResult verifyForWebhook(String chain, String txid,
-                                               String expectedWalletAddress, String expectedCryptoAmount,
-                                               LocalDateTime orderCreatedAt) {
+                                              String expectedWalletAddress,
+                                              String expectedCryptoAmount,
+                                              LocalDateTime orderCreatedAt) {
         ChainTransaction tx;
         try {
             // Webhook 回调来自 BEpusdt 自身的链上扫描，可信度高，跳过 TRC20 solidification 检查
@@ -397,6 +537,9 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
         if (tx == null) {
             return new ChainVerifyResult(false, "交易不存在");
         }
+        if (!tx.confirmed()) {
+            return new ChainVerifyResult(false, "交易未确认或执行失败");
+        }
 
         // 2. 收款地址是否匹配
         if (tx.to() == null || !tx.to().equalsIgnoreCase(expectedWalletAddress)) {
@@ -404,9 +547,9 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
                     "收款地址不匹配: expected=" + expectedWalletAddress + ", actual=" + tx.to());
         }
 
-        // 3. Token 合约是否为 USDT
-        if (tx.contractAddress() == null || !USDT_CONTRACTS.contains(tx.contractAddress().toLowerCase())) {
-            return new ChainVerifyResult(false, "非 USDT 合约交易");
+        // 3. 币种是否匹配订单链路
+        if (!isExpectedAsset(chain, tx.contractAddress())) {
+            return new ChainVerifyResult(false, assetMismatchMessage(chain));
         }
 
         // 4. 交易时间校验（防止旧交易 TXID 重放，兜底防御）
@@ -444,8 +587,8 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
      * 保存审核记录到 unmatched_transactions 表
      */
     private void saveUnmatched(Order order, String txid, String chain,
-                                VerifyResult result, String reason,
-                                String from, String to, String amount) {
+                               VerifyResult result, String reason,
+                               String from, String to, String amount) {
         UnmatchedTransaction ut = new UnmatchedTransaction();
         ut.setOrderId(order.getId());
         ut.setTxid(txid);
@@ -468,6 +611,25 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
 
     // ── Tron 地址格式转换工具 ──
 
+    private boolean isExpectedAsset(String chain, String contractAddress) {
+        if (isTrxChain(chain)) {
+            return NATIVE_TRX_ASSET.equals(contractAddress);
+        }
+        return contractAddress != null && USDT_CONTRACTS.contains(contractAddress.toLowerCase());
+    }
+
+    private boolean isTrxChain(String chain) {
+        return chain != null && chain.toLowerCase().contains("trx");
+    }
+
+    private String assetMismatchReason(String chain) {
+        return isTrxChain(chain) ? "NOT_TRX" : "NOT_USDT";
+    }
+
+    private String assetMismatchMessage(String chain) {
+        return isTrxChain(chain) ? "非 TRX 转账交易" : "非 USDT 合约交易";
+    }
+
     private static final String BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
     /**
@@ -482,7 +644,9 @@ public class TxidVerifyServiceImpl implements TxidVerifyService {
         if (hexAddress.startsWith("T")) return hexAddress;
         try {
             String hex = hexAddress.startsWith("0x") ? hexAddress.substring(2) : hexAddress;
-            byte[] rawAddress = hexStringToBytes("41" + hex);
+            byte[] rawAddress = hex.startsWith("41") && hex.length() == 42
+                    ? hexStringToBytes(hex)
+                    : hexStringToBytes("41" + hex);
             // SHA-256 双重哈希取前 4 字节作为校验码
             MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
             byte[] hash1 = sha256.digest(rawAddress);
